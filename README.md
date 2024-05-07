@@ -1,5 +1,5 @@
 # Step 1 : Basic Setup (Communication Server-Client)
-
+### [**Code**](https://github.com/Subham-Maity/scalable_chat_app_nest/tree/5adeea135b5010e44b30ea36bdc156ee929ed893)
 - `server` - `api/src/chat/chat.gateway.ts`
 ```ts
 import {
@@ -210,4 +210,206 @@ const ChatComponent = () => {
 };
 
 export default ChatComponent;
+```
+
+
+# Step 2 : Setup Context with Component
+### [**Code**]()
+
+Destructure the code 
+
+
+`Context` - `client/src/context/socket-provider.tsx`
+
+```tsx
+"use client";
+
+import React, { createContext, useCallback, useEffect, useState } from "react";
+import io, { Socket } from "socket.io-client";
+
+// Interface defining the shape of the SocketContext value
+// This interface specifies the structure of the data that will be provided by the SocketContext
+interface SocketContextValue {
+  // sendMessage is a function that takes a string argument and is used to send a message to the server
+  sendMessage: (msg: string) => void;
+  // messages is an array of strings representing the messages received from the server
+  messages: string[];
+}
+
+// Creating the SocketContext with a null initial value
+// Creates a new React context with an initial value of null
+// This context will be used to share the sendMessage function and messages array with other components
+export const SocketContext = createContext<SocketContextValue | null>(null);
+
+// SocketProvider component that manages the WebSocket connection and provides context value
+// This is a React component that sets up the WebSocket connection, manages its state, and provides the context value
+export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  // Using the useState hook to store the socket instance and the array of messages
+  const [socket, setSocket] = useState<Socket | null>(null);
+  const [messages, setMessages] = useState<string[]>([]);
+
+  // Memoized sendMessage function using useCallback
+  // The useCallback hook is used to memoize the sendMessage function
+  // This ensures that the function is only recreated when the socket instance changes
+  const sendMessage = useCallback((msg: string) => {
+    // If the socket instance is available, emit the 'newMessage' event with the provided message
+    if (socket) {
+      socket.emit("newMessage", msg);
+    }
+  }, [socket]);
+
+  // Setting up WebSocket connection and event listeners
+  // The useEffect hook is used to set up the WebSocket connection and event listeners
+  useEffect(() => {
+    // Create a new WebSocket connection to the server running at http://localhost:3002
+    const newSocket = io("http://localhost:3002");
+    // Update the socket state with the new socket instance
+    setSocket(newSocket);
+
+    // Event listener for 'message' event
+    // When the server sends a message, this event listener is triggered
+    // The received message is appended to the messages array using the setMessages function
+    newSocket.on("message", (data) => {
+      setMessages((prevMessages) => [...prevMessages, data]);
+    });
+
+    // Event listener for 'user-joined' event
+    // When a new user joins the chat, this event listener is triggered
+    // The join message is appended to the messages array
+    newSocket.on("user-joined", (data) => {
+      setMessages((prevMessages) => [...prevMessages, data.message]);
+    });
+
+    // Event listener for 'user-left' event
+    // When a user leaves the chat, this event listener is triggered
+    // The leave message is appended to the messages array
+    newSocket.on("user-left", (data) => {
+      setMessages((prevMessages) => [...prevMessages, data.message]);
+    });
+
+    // Cleanup function to remove event listeners and disconnect the socket
+    // This function is returned from the useEffect hook and will be called when the component unmounts
+    // It removes the event listeners and disconnects the WebSocket connection to prevent memory leaks
+    return () => {
+      newSocket.off("message");
+      newSocket.off("user-joined");
+      newSocket.off("user-left");
+      newSocket.disconnect();
+    };
+  }, []);
+
+  // Defining the context value object
+  // The context value object contains the sendMessage function and the messages array
+  const contextValue: SocketContextValue = {
+    sendMessage,
+    messages,
+  };
+
+  // Rendering the SocketContext.Provider with the context value
+  // The SocketContext.Provider component provides the context value to its children components
+  // Any component wrapped by this provider will have access to the sendMessage function and messages array
+  return <SocketContext.Provider value={contextValue}>{children}</SocketContext.Provider>;
+};
+
+// Custom hook to access the SocketContext value
+// This is a custom hook that provides a convenient way to access the SocketContext value
+export const useSocket = () => {
+  // Use the useContext hook to retrieve the context value
+  const context = React.useContext(SocketContext);
+
+  // If the context value is null, throw an error
+  // This ensures that the useSocket hook is only used within a SocketProvider
+  if (!context) {
+    throw new Error("useSocket must be used within a SocketProvider");
+  }
+
+  // Return the context value
+  return context;
+};
+```
+`chat.tsx` - `client/src/components/chat.tsx`
+```tsx
+"use client";
+import React, { useEffect, useRef } from "react";
+import { useSocket } from "@/context/socket-provider";
+import ChatInput from "@/components/chat-input";
+
+const ChatComponent = () => {
+// Accessing the messages state from the SocketContext using the useSocket hook
+  const { messages } = useSocket();
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+// Scrolling to the bottom of the message container whenever the messages state changes
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  return (
+    <div className="align">
+      <div className="heading">Chat</div>
+      <div className="msg">
+        {messages.map((msg, index) => (
+          <div key={index} className="msg-li">
+            {msg}
+          </div>
+        ))}
+        <div ref={messagesEndRef} />
+      </div>
+      <ChatInput />
+    </div>
+  );
+};
+
+export default ChatComponent;
+```
+`chat-input.tsx` - `client/src/components/chat-input.tsx`
+
+```tsx
+import React from "react";
+import { useSocket } from "@/context/socket-provider";
+
+const ChatInput = () => {
+  const [message, setMessage] = React.useState("");
+  const { sendMessage } = useSocket();
+  // Handling the form submission and sending the message
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (message.trim()) {
+      sendMessage(message);
+      setMessage("");
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="form">
+      <input
+        type="text"
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
+        placeholder="Type your message..."
+        className="input"
+      />
+      <button type="submit" className="btn">
+        Send
+      </button>
+    </form>
+  );
+};
+
+export default ChatInput;
+```
+`layout.tsx` - `client/src/app/layout.tsx`
+```tsx
+export default function RootLayout({
+                                     children,
+                                   }: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html lang="en">
+    <SocketProvider>
+      <body className={inter.className}>{children}</body>
+    </SocketProvider>
+    </html>
+  );
+}
 ```
