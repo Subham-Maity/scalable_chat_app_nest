@@ -434,7 +434,7 @@ export default function RootLayout({
 ```
 
 ## Step 3 : Setup Redis(pub-sub)
-### [**Commit**]()
+### [**Commit**](https://github.com/Subham-Maity/scalable_chat_app_nest)
 
 - `.env` - `scalable_chat_app_nest\api\.env`
 ```dotenv
