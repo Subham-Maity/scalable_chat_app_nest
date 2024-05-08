@@ -1,37 +1,49 @@
 import {
-  WebSocketGateway,
-  SubscribeMessage,
   MessageBody,
+  OnGatewayConnection,
+  OnGatewayDisconnect,
+  SubscribeMessage,
+  WebSocketGateway,
   WebSocketServer,
-  OnGatewayConnection, OnGatewayDisconnect,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
+import { PubSubService } from '../redis/pubsub.service';
 
-@WebSocketGateway(3002,{cors:true})
-
-export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect{
+@WebSocketGateway(3002, { cors: true })
+export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
+  @WebSocketServer() server: Server;
   private readonly logger = new Logger(ChatGateway.name);
-  @WebSocketServer() server: Server
-  handleConnection(client: Socket){
-    this.logger.verbose('New client connected', client.id);
-    client.broadcast.emit( `user-joined`, {
-      message: `New user joined the chat: ${client.id}`,
-      id: client.id
-    })
+  // Inject the RedisService
+  constructor(private pubSubService: PubSubService) {
+    this.pubSubService.subscribe('chat', (message) => {
+      this.server.emit('message', message);
+    });
   }
 
-  handleDisconnect(client: Socket){
+  handleConnection(client: Socket) {
+    this.logger.verbose('New client connected', client.id);
+    client.broadcast.emit(`user-joined`, {
+      message: `New user joined the chat: ${client.id}`,
+      id: client.id,
+    });
+  }
+
+  handleDisconnect(client: Socket) {
     this.logger.verbose('Client disconnected', client.id);
-    this.server.emit( `user-left`, {
+    this.server.emit(`user-left`, {
       message: `User left the chat: ${client.id}`,
-      id: client.id
-    })
+      id: client.id,
+    });
   }
 
   @SubscribeMessage('newMessage')
-  handleNewMessage( client: Socket,@MessageBody() message: any) {
+  async handleNewMessage(@MessageBody() message: any) {
     this.logger.debug(message);
-    this.server.emit('message', message);
+    //Shift this to the redis service
+    // this.server.emit('message', message);
+
+    // Publish the message to the Redis channel
+    this.pubSubService.publish('chat', JSON.stringify(message));
   }
 }

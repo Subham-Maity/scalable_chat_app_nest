@@ -1,5 +1,24 @@
-# Step 1 : Basic Setup (Communication Server-Client)
-### [**Code**](https://github.com/Subham-Maity/scalable_chat_app_nest/tree/5adeea135b5010e44b30ea36bdc156ee929ed893)
+# Problem Statement:
+In a scenario where multiple clients (users) need to communicate in real-time, a traditional approach of having a single server would not scale well. As the number of clients increases, the single server would become a bottleneck, leading to performance issues and potential failures. Additionally, if clients are connected to different servers, they would not be able to communicate with each other, resulting in message silos.
+
+# Approach
+
+![image](./images/q.png)
+1. **Multiple Server Instances**: Multiple server instances (Server 1, Server 2, Server 3) are deployed to handle the load of connected clients, instead of relying on a single server.
+
+2. **Redis Pub/Sub**: A Redis instance acts as a central message broker using its Pub/Sub functionality. Each server instance establishes a connection with Redis, acting as both a publisher and a subscriber.
+
+3. **Publishing Messages**: When a client sends a message to the server they are connected to, the server publishes the message to a specific channel (e.g., "chat") in Redis using the Pub/Sub mechanism.
+
+4. **Subscribing to Messages**: All other server instances have subscribed to the same channel in Redis. When a message is published, Redis distributes the message to all subscribed servers.
+
+5. **Broadcasting Messages**: Each server instance receives the message from Redis and broadcasts it to all the clients connected to that particular server instance.
+
+By utilizing Redis Pub/Sub, the solution decouples message distribution from individual servers. The load is distributed across multiple server instances, ensuring scalability as new instances can be added without affecting communication flow. Clients connected to different server instances can communicate seamlessly, eliminating message silos and enabling real-time communication across the entire system.
+
+## Step 1 : Basic Setup (Communication Server-Client)
+
+### [**Commit**](https://github.com/Subham-Maity/scalable_chat_app_nest/tree/5adeea135b5010e44b30ea36bdc156ee929ed893)
 - `server` - `api/src/chat/chat.gateway.ts`
 ```ts
 import {
@@ -213,8 +232,8 @@ export default ChatComponent;
 ```
 
 
-# Step 2 : Setup Context with Component
-### [**Code**]()
+## Step 2 : Setup Context with Component
+### [**Commit**](https://github.com/Subham-Maity/scalable_chat_app_nest/tree/ac9b8b8daea75d6db0a1e396c76d54c23b8d4259)
 
 Destructure the code 
 
@@ -413,3 +432,133 @@ export default function RootLayout({
   );
 }
 ```
+
+## Step 3 : Setup Redis(pub-sub)
+### [**Commit**]()
+
+- `.env` - `scalable_chat_app_nest\api\.env`
+```dotenv
+#Port
+
+PORT=""
+
+#Redis Host
+
+REDIS_HOST=""
+
+REDIS_PORT=
+
+REDIS_USERNAME=""
+
+REDIS_PASSWORD=""
+```
+
+- `pub-sub` - `api/src/redis/pubsub.service.ts`
+```ts
+import { Injectable } from '@nestjs/common';
+import { Redis } from 'ioredis';
+import { ConfigService } from '@nestjs/config';
+
+@Injectable()
+export class PubSubService {
+  private readonly publisher: Redis;
+  private readonly subscriber: Redis;
+
+  constructor(private configService: ConfigService) {
+    // Get the Redis configuration options from the ConfigService
+    const redisHost =
+      this.configService.get<string>('REDIS_HOST') || 'localhost';
+    const redisPort = this.configService.get<number>('REDIS_PORT') || 6379;
+    const redisUsername =
+      this.configService.get<string>('REDIS_USERNAME') || '';
+    const redisPassword =
+      this.configService.get<string>('REDIS_PASSWORD') || '';
+
+    // Connect to Redis with the configuration options
+    this.publisher = new Redis({
+      host: redisHost,
+      port: redisPort,
+      username: redisUsername,
+      password: redisPassword,
+    });
+    this.subscriber = new Redis({
+      host: redisHost,
+      port: redisPort,
+      username: redisUsername,
+      password: redisPassword,
+    });
+  }
+
+  publish(channel: string, message: string): void {
+    this.publisher.publish(channel, message);
+  }
+
+  subscribe(channel: string, callback: (message: string) => void): void {
+    this.subscriber.subscribe(channel);
+    this.subscriber.on('message', (receivedChannel, receivedMessage) => {
+      if (receivedChannel === channel) {
+        callback(receivedMessage);
+      }
+    });
+  }
+}
+
+```
+- `modify the chat.gateway.ts` - `api/src/chat/chat.gateway.ts`
+
+```ts
+import {
+  MessageBody,
+  OnGatewayConnection,
+  OnGatewayDisconnect,
+  SubscribeMessage,
+  WebSocketGateway,
+  WebSocketServer,
+} from '@nestjs/websockets';
+import { Server, Socket } from 'socket.io';
+import { Logger } from '@nestjs/common';
+import { PubSubService } from '../redis/pubsub.service';
+
+@WebSocketGateway(3002, { cors: true })
+export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
+  @WebSocketServer() server: Server;
+  private readonly logger = new Logger(ChatGateway.name);
+  // Inject the RedisService
+  constructor(private pubSubService: PubSubService) {
+    this.pubSubService.subscribe('chat', (message) => {
+      this.server.emit('message', message);
+    });
+  }
+
+  handleConnection(client: Socket) {
+    this.logger.verbose('New client connected', client.id);
+    client.broadcast.emit(`user-joined`, {
+      message: `New user joined the chat: ${client.id}`,
+      id: client.id,
+    });
+  }
+
+  handleDisconnect(client: Socket) {
+    this.logger.verbose('Client disconnected', client.id);
+    this.server.emit(`user-left`, {
+      message: `User left the chat: ${client.id}`,
+      id: client.id,
+    });
+  }
+
+  @SubscribeMessage('newMessage')
+  async handleNewMessage(@MessageBody() message: any) {
+    this.logger.debug(message);
+    //Shift this to the redis service
+    // this.server.emit('message', message);
+
+    // Publish the message to the Redis channel
+    this.pubSubService.publish('chat', JSON.stringify(message));
+  }
+}
+
+```
+## Test
+
+![image](./images/1.png)
+![image](./images/2.png)
